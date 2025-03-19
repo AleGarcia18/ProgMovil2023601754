@@ -25,45 +25,45 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.math.sqrt
 
 class MainActivity : ComponentActivity(), SensorEventListener {
-    private lateinit var sensorManager: SensorManager
-    private var lastAcceleration = 9.8f // Gravedad terrestre
-    private var lastGolpeTime = 0L // Último golpe detectado
+    private lateinit var administradorSensor: SensorManager
+    private var ultimaAceleracion = 9.8f
+    private var ultimoTiempoGolpe = 0L
     private var golpeDetectado = mutableStateOf(false)
-    private var mostrarPuntaje = mutableStateOf(false) // Estado para mostrar el puntaje
-    private lateinit var vibrator: Vibrator
-    private var mediaPlayer: MediaPlayer? = null
+    private var mostrarPuntaje = mutableStateOf(false)
+    private lateinit var vibrador: Vibrator
+    private var reproductorMedia: MediaPlayer? = null
     private val mutex = Mutex()
-    private val scope = CoroutineScope(Dispatchers.Main)
-    private var saqueJob: Job? = null
-    private var puntajeJob: Job? = null
+    private val alcance = CoroutineScope(Dispatchers.Main)
+    private var trabajoSaque: Job? = null
+    private var trabajoPuntaje: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        sensorManager = getSystemService(SensorManager::class.java)
-        sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.also {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        administradorSensor = getSystemService(SensorManager::class.java)
+        administradorSensor.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.also {
+            administradorSensor.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
-        vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        vibrador = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
         setContent {
             UIPrincipal(golpeDetectado.value, mostrarPuntaje.value)
         }
 
-        iniciarSaqueRepetitivo() // Iniciar la lógica del saque repetitivo
+        iniciarSaqueRepetitivo()
     }
 
-    override fun onSensorChanged(event: SensorEvent?) {
-        event?.let {
-            val acceleration = sqrt(
+    override fun onSensorChanged(evento: SensorEvent?) {
+        evento?.let {
+            val aceleracion = sqrt(
                 (it.values[0] * it.values[0] +
                         it.values[1] * it.values[1] +
                         it.values[2] * it.values[2]).toDouble()
             ).toFloat()
 
-            val delta = acceleration - lastAcceleration
-            lastAcceleration = acceleration
+            val delta = aceleracion - ultimaAceleracion
+            ultimaAceleracion = aceleracion
 
-            if (System.nanoTime() - lastGolpeTime < 500_000_000) return // Evitar detección doble en 500ms
+            if (System.nanoTime() - ultimoTiempoGolpe < 500_000_000) return
 
             when {
                 delta > 15 -> {
@@ -81,44 +81,44 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     private fun registrarGolpe(sonido: Int) {
         golpeDetectado.value = true
-        lastGolpeTime = System.nanoTime()
+        ultimoTiempoGolpe = System.nanoTime()
 
-        // Reiniciar el temporizador del saque y puntaje
+
         cancelarSaque()
         cancelarPuntaje()
 
         reproducirGolpe(sonido)
         vibrar()
 
-        // Iniciar el temporizador para mostrar puntaje tras 3 segundos sin golpes
-        puntajeJob = scope.launch {
+
+        trabajoPuntaje = alcance.launch {
             delay(3000)
             mostrarImagenPuntaje()
         }
 
-        // Reiniciar el bucle del saque repetitivo
+
         iniciarSaqueRepetitivo()
     }
 
     private fun mostrarImagenPuntaje() {
         mostrarPuntaje.value = true
-        scope.launch {
+        alcance.launch {
             reproducirSonido(R.raw.aplausos)
-            delay(5000) // Mostrar el puntaje y aplausos por 6 segundos
+            delay(2000)
             mostrarPuntaje.value = false
         }
     }
 
     private fun vibrar() {
-        if (vibrator.hasVibrator()) {
-            val vibrationEffect = VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE)
-            vibrator.vibrate(vibrationEffect)
+        if (vibrador.hasVibrator()) {
+            val efectoVibracion = VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE)
+            vibrador.vibrate(efectoVibracion)
         }
     }
 
     private fun reproducirGolpe(sonido: Int) {
-        if (mediaPlayer?.isPlaying == true) return
-        scope.launch {
+        if (reproductorMedia?.isPlaying == true) return
+        alcance.launch {
             mutex.withLock {
                 reproducirSonido(sonido)
             }
@@ -127,11 +127,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     private fun reproducirSonido(sonido: Int) {
         try {
-            mediaPlayer?.release()
-            mediaPlayer = MediaPlayer.create(this, sonido).apply {
+            reproductorMedia?.release()
+            reproductorMedia = MediaPlayer.create(this, sonido).apply {
                 setOnCompletionListener {
                     release()
-                    mediaPlayer = null
+                    reproductorMedia = null
                 }
                 start()
             }
@@ -142,10 +142,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
     private fun iniciarSaqueRepetitivo() {
         cancelarSaque()
-        saqueJob = scope.launch {
+        trabajoSaque = alcance.launch {
             while (true) {
-                delay(3000) // Espera 3 segundos
-                if (System.nanoTime() - lastGolpeTime > 3_000_000_000) { // Si no hay golpe en 3s, reproducir saque
+                delay(3000)
+                if (System.nanoTime() - ultimoTiempoGolpe > 3_000_000_000) {
                     mutex.withLock {
                         reproducirSonido(R.raw.saque)
                     }
@@ -155,20 +155,20 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
 
     private fun cancelarSaque() {
-        saqueJob?.cancel()
+        trabajoSaque?.cancel()
     }
 
     private fun cancelarPuntaje() {
-        puntajeJob?.cancel()
+        trabajoPuntaje?.cancel()
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    override fun onAccuracyChanged(sensor: Sensor?, precision: Int) {}
 
     override fun onDestroy() {
         super.onDestroy()
-        sensorManager.unregisterListener(this)
-        scope.cancel()
-        mediaPlayer?.release()
+        administradorSensor.unregisterListener(this)
+        alcance.cancel()
+        reproductorMedia?.release()
     }
 }
 
@@ -198,8 +198,6 @@ fun UIPrincipal(golpeDetectado: Boolean, mostrarPuntaje: Boolean) {
 
 @Preview(showBackground = true)
 @Composable
-fun GreetingPreview() {
+fun VistaPrevia() {
     UIPrincipal(golpeDetectado = false, mostrarPuntaje = false)
 }
-
-
